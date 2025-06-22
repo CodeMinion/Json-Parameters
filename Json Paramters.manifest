@@ -1,0 +1,13 @@
+{
+	"autodeskProduct":	"Fusion",
+	"type":	"addin",
+	"author":	"Frank Hernandez",
+	"description":	{
+		"":	"Script for exporting and importing user parameters in JSON format."
+	},
+	"version":	"0.0.1",
+	"supportedOS":	"windows|mac",
+	"editEnabled":	true,
+	"runOnStartup": true,
+	"iconFilename":	"ScriptIcon.svg"
+}
