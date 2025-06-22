@@ -13,9 +13,13 @@ ui  = app.userInterface
 
 handlers = []
 
-palette_id = 'ParamImportPalette'
+palette_import_id = 'ParamImportPalette'
+palette_export_id = 'ParamExportPalette'
 temp_params = []  # Holds parsed JSON parameters
-html_ready = False  # global flag
+html_ready_flags = {
+    'import': False,
+    'export': False
+}
 
 def export_user_parameters():
     try:
@@ -55,13 +59,13 @@ def export_user_parameters():
 
 def show_import_palette(params_json):
     try:
-        palette = ui.palettes.itemById(palette_id)
+        palette = ui.palettes.itemById(palette_import_id)
         if palette:
             palette.deleteMe()
 
-        html_path = os.path.join(os.path.dirname(__file__), 'resources', 'import_ui.html')
+        html_path = os.path.join(os.path.dirname(__file__), 'resources', 'param_ui.html')
         palette = ui.palettes.add(
-            palette_id,
+            palette_import_id,
             'Import User Parameters',
             html_path,
             True, True, True, 400, 400
@@ -81,7 +85,8 @@ def show_import_palette(params_json):
         global temp_params
         temp_params = params_json
         
-        html_ready = False
+        #html_ready = False
+        html_ready_flags['import'] = False
         
         #json_str = json.dumps(params_json)
         #ui.messageBox(json_str)
@@ -121,7 +126,6 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
     def notify(self, args):
         try:
 
-            
             ui.messageBox(args.data)
 
             if 'action' not in args.data:
@@ -139,8 +143,8 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
 
             
             if msg['action'] == 'htmlReady':
-                html_ready = True
-                palette = ui.palettes.itemById(palette_id)
+                html_ready_flags['import'] = True
+                palette = ui.palettes.itemById(palette_import_id)
                 if palette and palette.isVisible:
                     # Now it's safe to send the parameters
                     palette.sendInfoToHTML('loadParams', json.dumps(temp_params))
@@ -189,13 +193,55 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
                     added += 1
 
                 ui.messageBox(f'Imported {added} parameters.')
-                palette = ui.palettes.itemById(palette_id)
+                palette = ui.palettes.itemById(palette_import_id)
                 if palette:
                     palette.isVisible = False
 
         except:
             ui.messageBox('Import HTML Message Error:\n{}'.format(traceback.format_exc()))
 
+class ExportHTMLMessageHandler(adsk.core.HTMLEventHandler):
+    def notify(self, args):
+
+        ui.messageBox(args.data)
+
+        if 'action' not in args.data:
+            return
+
+        msg = json.loads(args.data)
+            
+        is_msg_dict = isinstance(json.loads(args.data), dict)
+
+        if not is_msg_dict:
+            # Hack: Work around to handle the fact that when the html sends the data json.loads does not parse it right away into a dict. 
+            msg = json.loads(f"{msg}")
+
+        if msg['action'] == 'htmlReady':
+            html_ready_flags['export'] = True
+            palette = ui.palettes.itemById(palette_export_id)
+            if palette and palette.isVisible:
+                palette.sendInfoToHTML('loadExportParams', json.dumps(temp_params))
+
+
+        elif msg['action'] == 'export':
+            selected_names = set(msg['selected'])
+            export_data = [p for p in temp_params if p['name'] in selected_names]
+
+            # Ask user where to save
+            fileDlg = ui.createFileDialog()
+            fileDlg.title = "Save Exported Parameters"
+            fileDlg.filter = 'JSON files (*.json)'
+            if fileDlg.showSave() != adsk.core.DialogResults.DialogOK:
+                return
+            with open(fileDlg.filename, 'w') as f:
+                json.dump(export_data, f, indent=4)
+
+            ui.messageBox(f'Exported {len(export_data)} parameters.')
+            palette = ui.palettes.itemById(palette_export_id)
+            if palette:
+                palette.isVisible = False
+        pass
+    pass
 
 class PaletteClosedHandler(adsk.core.UserInterfaceGeneralEventHandler):
     def notify(self, args):
@@ -219,7 +265,51 @@ class ExportParamsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
 # Export Command execution
 class ExportParamsCommandExecuteHandler(adsk.core.CommandEventHandler):
     def notify(self, args):
-        export_user_parameters()
+        #export_user_parameters()
+        try:  
+            design = adsk.fusion.Design.cast(app.activeProduct)
+            if not design:
+                ui.messageBox('No active design.')
+                return
+
+            userParams = design.userParameters
+            global temp_params, html_ready_flags
+            temp_params = [{
+                'name': p.name,
+                'value': p.value,
+                'expression': p.expression,
+                'units': p.unit,
+                'comment': p.comment
+            } for p in userParams]
+
+            html_ready_flags['export'] = False
+            palette = ui.palettes.itemById(palette_export_id)
+            if palette:
+                palette.deleteMe()
+
+            
+            html_path = os.path.join(os.path.dirname(__file__), 'resources', 'param_ui.html')
+            palette = ui.palettes.add(
+                palette_export_id,
+                'Export Parameters',
+                html_path,
+                True, True, True, 400, 400
+            )
+
+            # Dock the palette to the right side of Fusion window.
+            palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
+
+            on_close = PaletteClosedHandler()
+            palette.closed.add(on_close)
+            handlers.append(on_close)
+
+            on_incoming = ExportHTMLMessageHandler()
+            palette.incomingFromHTML.add(on_incoming)
+            handlers.append(on_incoming)
+
+        except:
+            ui.messageBox('Export command failed:\n{}'.format(traceback.format_exc()))
+        pass
 
 class ImportParamsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
     def notify(self, args):
