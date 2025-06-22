@@ -5,12 +5,17 @@ import adsk.core
 import adsk.fusion
 # import adsk.cam
 import json
+import os 
 
 # Initialize the global variables for the Application and UserInterface objects.
 app = adsk.core.Application.get()
 ui  = app.userInterface
 
 handlers = []
+
+palette_id = 'ParamImportPalette'
+temp_params = []  # Holds parsed JSON parameters
+html_ready = False  # global flag
 
 def export_user_parameters():
     try:
@@ -48,6 +53,46 @@ def export_user_parameters():
     except:
         ui.messageBox('Failed:\n{}'.format(traceback.format_exc()))
 
+def show_import_palette(params_json):
+    try:
+        palette = ui.palettes.itemById(palette_id)
+        if palette:
+            palette.deleteMe()
+
+        html_path = os.path.join(os.path.dirname(__file__), 'resources', 'import_ui.html')
+        palette = ui.palettes.add(
+            palette_id,
+            'Import User Parameters',
+            html_path,
+            True, True, True, 400, 400
+        )
+
+        # Dock the palette to the right side of Fusion window.
+        palette.dockingState = adsk.core.PaletteDockingStates.PaletteDockStateRight
+
+        on_close = PaletteClosedHandler()
+        palette.closed.add(on_close)
+        handlers.append(on_close)
+
+        on_incoming = ImportHTMLMessageHandler()
+        palette.incomingFromHTML.add(on_incoming)
+        handlers.append(on_incoming)
+
+        global temp_params
+        temp_params = params_json
+        
+        html_ready = False
+        
+        #json_str = json.dumps(params_json)
+        #ui.messageBox(json_str)
+        # Send data to HTML
+        # retVal = palette.sendInfoToHTML('loadParams', json_str)
+        #ui.messageBox(f"Value returned {retVal}")
+
+    except:
+        ui.messageBox('Failed to show import palette:\n{}'.format(traceback.format_exc()))
+
+
 
 def import_user_parameters():
     try:
@@ -66,49 +111,98 @@ def import_user_parameters():
         with open(fileDlg.filename, 'r') as f:
             params = json.load(f)
 
-        userParams = design.userParameters
-        existing_names = {p.name for p in userParams}
-
-        count_added = 0
-
+        show_import_palette(params)
         
-        # Note: If we try to add a parameter that depends on another paramter that has 
-        # not yet been added, the insert will fail. 
-
-        lst_failed_parameters = []
-        for p in params:
-            name = p['name']
-            expression = p.get('expression') or str(p.get('value', '1'))
-            units = p.get('units', '')
-            comment = p.get('comment', '') 
-
-            # Avoid duplicates
-            if name in existing_names:
-                continue
-
-            try:
-                valueInput = adsk.core.ValueInput.createByString(expression)
-                userParams.add(name, valueInput, units, comment)
-                count_added += 1
-            except: 
-                lst_failed_parameters.append((name, expression, units, comment))    
-
-        
-        # For every failed param attempt to add them again. 
-        for failed_param_tuple in lst_failed_parameters:
-            #try:
-            name, expression, units, comment = failed_param_tuple
-            valueInput = adsk.core.ValueInput.createByString(expression)
-            userParams.add(name, valueInput, units, comment)
-            count_added += 1
-            #except:
-            #    pass    
-            pass
-
-        ui.messageBox(f'Imported {count_added} parameters.')
-
     except:
         ui.messageBox('Import failed:\n{}'.format(traceback.format_exc()))
+
+
+class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
+    def notify(self, args):
+        try:
+
+            
+            ui.messageBox(args.data)
+
+            if 'action' not in args.data:
+                return
+
+            msg = json.loads(args.data)
+            
+            is_msg_dict = isinstance(json.loads(args.data), dict)
+
+            if not is_msg_dict:
+                # Hack: Work around to handle the fact that when the html sends the data json.loads does not parse it right away into a dict. 
+                msg = json.loads(f"{msg}")
+
+            ui.messageBox(f"{msg} - {len(msg)}")
+
+            
+            if msg['action'] == 'htmlReady':
+                html_ready = True
+                palette = ui.palettes.itemById(palette_id)
+                if palette and palette.isVisible:
+                    # Now it's safe to send the parameters
+                    palette.sendInfoToHTML('loadParams', json.dumps(temp_params))
+
+
+            if msg['action'] == 'import':
+                selected_names = set(msg['selected'])
+                design = adsk.fusion.Design.cast(app.activeProduct)
+                userParams = design.userParameters
+                existing = {p.name for p in userParams}
+                added = 0
+
+                lst_failed_parameters = []
+                for p in temp_params:
+                    if p['name'] not in selected_names:
+                        continue
+                    if p['name'] in existing:
+                        continue
+                    expr = p.get('expression', str(p.get('value', 1)))
+                    
+                    name = p['name']
+                    units = p.get('units', '')
+                    comment = p.get('comment', '')
+                    try:
+                        userParams.add(
+                            name,
+                            adsk.core.ValueInput.createByString(expr),
+                            units,
+                            comment
+                        )
+                        added += 1
+                    except:
+                        # Track paramter that fialed. 
+                        failed_tuple = (name, expr, units, comment)
+                        lst_failed_parameters.append(failed_tuple)
+                        pass    
+
+                for failed_tuple in lst_failed_parameters:
+                    name, expr, units, comment = failed_tuple
+                    userParams.add(
+                            name,
+                            adsk.core.ValueInput.createByString(expr),
+                            units,
+                            comment
+                        )
+                    added += 1
+
+                ui.messageBox(f'Imported {added} parameters.')
+                palette = ui.palettes.itemById(palette_id)
+                if palette:
+                    palette.isVisible = False
+
+        except:
+            ui.messageBox('Import HTML Message Error:\n{}'.format(traceback.format_exc()))
+
+
+class PaletteClosedHandler(adsk.core.UserInterfaceGeneralEventHandler):
+    def notify(self, args):
+        try:
+            ui.messageBox('Parameter import canceled.')
+        except:
+            pass
 
 
 # Export CommandCreated event handler
