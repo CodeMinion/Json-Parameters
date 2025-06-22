@@ -126,7 +126,7 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
     def notify(self, args):
         try:
 
-            ui.messageBox(args.data)
+            #ui.messageBox(args.data)
 
             if 'action' not in args.data:
                 return
@@ -139,7 +139,7 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
                 # Hack: Work around to handle the fact that when the html sends the data json.loads does not parse it right away into a dict. 
                 msg = json.loads(f"{msg}")
 
-            ui.messageBox(f"{msg} - {len(msg)}")
+            #ui.messageBox(f"{msg} - {len(msg)}")
 
             
             if msg['action'] == 'htmlReady':
@@ -203,7 +203,7 @@ class ImportHTMLMessageHandler(adsk.core.HTMLEventHandler):
 class ExportHTMLMessageHandler(adsk.core.HTMLEventHandler):
     def notify(self, args):
 
-        ui.messageBox(args.data)
+        #ui.messageBox(args.data)
 
         if 'action' not in args.data:
             return
@@ -246,7 +246,9 @@ class ExportHTMLMessageHandler(adsk.core.HTMLEventHandler):
 class PaletteClosedHandler(adsk.core.UserInterfaceGeneralEventHandler):
     def notify(self, args):
         try:
-            ui.messageBox('Parameter import canceled.')
+            #ui.messageBox('Parameter import canceled.')
+            # Do nothing.
+            pass
         except:
             pass
 
